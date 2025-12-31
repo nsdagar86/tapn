@@ -1,0 +1,837 @@
+
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import ReactDOM from 'react-dom/client';
+
+// --- TYPES & ENUMS ---
+
+enum View {
+  HOME = 'home',
+  TASKS = 'tasks',
+  WALLET = 'wallet',
+  LEADERBOARD = 'leaderboard',
+  PROFILE = 'profile',
+  EARNINGS = 'earnings',
+  JOIN_US = 'join_us'
+}
+
+enum TaskType {
+  DAILY = 'daily',
+  PARTNER = 'partner',
+  ADS = 'ads'
+}
+
+enum WithdrawalStatus {
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected'
+}
+
+interface SocialLink {
+  id: string;
+  platform: string;
+  url: string;
+}
+
+interface Task {
+  id: string;
+  type: TaskType;
+  title: string;
+  reward: number;
+  link?: string;
+}
+
+interface Withdrawal {
+  id: string;
+  userId: string;
+  amount: number;
+  status: WithdrawalStatus;
+  timestamp: number;
+  walletAddress: string;
+  remarks?: string;
+}
+
+interface Referral {
+  id: string;
+  username: string;
+  rewarded: boolean;
+}
+
+interface User {
+  id: string;
+  username: string;
+  avatar: string;
+  joiningDate: number;
+  walletAddress: string;
+  balances: {
+    mining: number;
+    daily: number;
+    partner: number;
+    ads: number;
+    taskEarnings: number;
+    totalWithdrawn: number;
+  };
+  mining: {
+    startTime: number | null;
+    isMining: boolean;
+  };
+  referrals: Referral[];
+  completedTaskIds: string[];
+  lastDailyLogin: number | null;
+}
+
+interface AppConfig {
+  logo: string;
+  tokenName: string;
+  miningTokenSymbol: string;
+  currencyName: string;
+  currencySymbol: string;
+  tonConversionRate: number;
+  defaultMiningSpeed: number;
+  adsReward: number;
+  referralCommission: number;
+  referralMiningReward: number;
+  referralSpeedBoost: number;
+  miningDurationHours: number;
+  minWithdrawal: number;
+  maxWithdrawal: number;
+  airdropNotification: string;
+  socialLinks: SocialLink[];
+}
+
+// --- CONSTANTS ---
+
+const STORAGE_KEY = 'gemini_miner_mega_db_v1';
+
+const INITIAL_CONFIG: AppConfig = {
+  logo: 'https://cdn-icons-png.flaticon.com/512/7074/7074620.png',
+  tokenName: 'GYK Network',
+  miningTokenSymbol: 'GYK',
+  currencyName: 'USDT',
+  currencySymbol: '$',
+  tonConversionRate: 0.005,
+  defaultMiningSpeed: 0.15,
+  adsReward: 15,
+  referralCommission: 25,
+  referralMiningReward: 10,
+  referralSpeedBoost: 0.02,
+  miningDurationHours: 8,
+  minWithdrawal: 50,
+  maxWithdrawal: 5000,
+  airdropNotification: '🚀 GYK Listing confirmed for Q4! Boost your mining speed now.',
+  socialLinks: [
+    { id: 's1', platform: 'Telegram News', url: 'https://t.me/example' },
+    { id: 's2', platform: 'Twitter / X', url: 'https://x.com/example' }
+  ]
+};
+
+const INITIAL_TASKS: Task[] = [
+  { id: 't1', type: TaskType.DAILY, title: 'Daily Check-in', reward: 10 },
+  { id: 't2', type: TaskType.PARTNER, title: 'Join Official Channel', reward: 100, link: 'https://t.me/example' },
+  { id: 't3', type: TaskType.PARTNER, title: 'Follow Founder on X', reward: 75, link: 'https://x.com/example' }
+];
+
+// --- COMPONENTS ---
+
+const HomeView: React.FC<{ user: User, config: AppConfig, onStart: () => void }> = ({ user, config, onStart }) => {
+  const [liveMining, setLiveMining] = useState(user.balances.mining);
+
+  useEffect(() => {
+    let interval: any;
+    if (user.mining.isMining && user.mining.startTime) {
+      interval = setInterval(() => {
+        const elapsed = (Date.now() - user.mining.startTime!) / 3600000;
+        const speed = config.defaultMiningSpeed + (user.referrals.length * config.referralSpeedBoost);
+        setLiveMining(user.balances.mining + (speed * elapsed));
+      }, 1000);
+    } else {
+      setLiveMining(user.balances.mining);
+    }
+    return () => clearInterval(interval);
+  }, [user, config]);
+
+  const progress = user.mining.isMining && user.mining.startTime 
+    ? Math.min(100, ((Date.now() - user.mining.startTime) / (config.miningDurationHours * 3600000)) * 100)
+    : 0;
+
+  return (
+    <div className="p-5 space-y-6 animate-fadeIn">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <img src={config.logo} className="w-10 h-10 rounded-xl shadow-lg border border-slate-700" alt="Logo" />
+          <div>
+            <h1 className="text-lg font-black text-white leading-tight">{config.tokenName}</h1>
+            <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest">Global Network Active</p>
+          </div>
+        </div>
+        <div className="bg-slate-900 px-3 py-1 rounded-full border border-slate-800">
+           <span className="text-[10px] font-black text-slate-500 uppercase">UID: {user.id}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-slate-900 p-4 rounded-3xl border border-slate-800 shadow-inner">
+          <p className="text-[9px] text-slate-500 font-black uppercase mb-1">Mined {config.miningTokenSymbol}</p>
+          <p className="text-xl font-black text-white truncate">{liveMining.toFixed(5)}</p>
+        </div>
+        <div className="bg-slate-900 p-4 rounded-3xl border border-slate-800 shadow-inner">
+          <p className="text-[9px] text-slate-500 font-black uppercase mb-1">Total Diamonds</p>
+          <p className="text-xl font-black text-yellow-500 truncate">{user.balances.taskEarnings.toFixed(2)} 💎</p>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-[2.5rem] p-8 flex flex-col items-center text-center space-y-6 shadow-2xl">
+        <div className={`w-36 h-36 rounded-full bg-slate-900 border-[10px] border-slate-800 flex items-center justify-center relative ${user.mining.isMining ? 'animate-pulse' : ''}`}>
+           <div className="absolute inset-0 rounded-full border-4 border-blue-500/20 animate-ping opacity-20" />
+           <span className="text-5xl drop-shadow-lg">⛏️</span>
+        </div>
+        
+        <div className="space-y-1">
+          <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Current Power</p>
+          <p className="text-2xl font-black text-white">{(config.defaultMiningSpeed + (user.referrals.length * config.referralSpeedBoost)).toFixed(2)} <span className="text-xs text-blue-500">{config.miningTokenSymbol}/hr</span></p>
+        </div>
+
+        {user.mining.isMining ? (
+          <div className="w-full space-y-3">
+            <div className="h-3 bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
+              <div className="h-full bg-blue-500 rounded-full transition-all duration-1000" style={{ width: `${progress}%` }} />
+            </div>
+            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Mining in progress...</p>
+          </div>
+        ) : (
+          <button onClick={onStart} className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-[2rem] font-black text-sm uppercase tracking-widest shadow-xl shadow-blue-900/40 transition-all active:scale-95">
+            Boost Mining Session
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const TasksView: React.FC<{ user: User, config: AppConfig, tasks: Task[], update: (fn: (u: User) => User) => void, onAd: () => void }> = ({ user, config, tasks, update, onAd }) => {
+  const [tab, setTab] = useState<TaskType>(TaskType.DAILY);
+
+  const canClaimDaily = () => {
+    if (!user.lastDailyLogin) return true;
+    const last = new Date(user.lastDailyLogin);
+    const now = new Date();
+    return last.getUTCDate() !== now.getUTCDate();
+  };
+
+  const completeTask = (task: Task) => {
+    if (task.type === TaskType.DAILY) {
+      if (!canClaimDaily()) return;
+      update(u => ({
+        ...u,
+        lastDailyLogin: Date.now(),
+        balances: { ...u.balances, daily: u.balances.daily + task.reward, taskEarnings: u.balances.taskEarnings + task.reward }
+      }));
+    } else {
+      if (user.completedTaskIds.includes(task.id)) return;
+      if (task.link) window.open(task.link, '_blank');
+      setTimeout(() => {
+        update(u => ({
+          ...u,
+          completedTaskIds: [...u.completedTaskIds, task.id],
+          balances: { ...u.balances, partner: u.balances.partner + task.reward, taskEarnings: u.balances.taskEarnings + task.reward }
+        }));
+      }, 2000);
+    }
+  };
+
+  return (
+    <div className="p-5 space-y-6 animate-fadeIn pb-32">
+      <div className="space-y-1">
+        <h1 className="text-3xl font-black text-white tracking-tight">Earning Center</h1>
+        <p className="text-slate-500 text-xs font-medium">Complete missions to stack Diamonds 💎</p>
+      </div>
+
+      <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800">
+        {[TaskType.DAILY, TaskType.PARTNER, TaskType.ADS].map(t => (
+          <button key={t} onClick={() => setTab(t)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === t ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-3">
+        {tab === TaskType.DAILY && tasks.filter(t => t.type === TaskType.DAILY).map(t => (
+          <div key={t.id} className="bg-slate-900 p-5 rounded-3xl border border-slate-800 flex items-center justify-between shadow-lg">
+            <div className="flex items-center space-x-4">
+              <span className="text-2xl">📅</span>
+              <div>
+                <p className="text-sm font-black text-white">{t.title}</p>
+                <p className="text-[10px] font-bold text-blue-400">+{t.reward} 💎</p>
+              </div>
+            </div>
+            <button disabled={!canClaimDaily()} onClick={() => completeTask(t)} className={`px-5 py-2 rounded-full text-[10px] font-black transition-all ${canClaimDaily() ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+              {canClaimDaily() ? 'CLAIM' : 'DONE'}
+            </button>
+          </div>
+        ))}
+
+        {tab === TaskType.PARTNER && tasks.filter(t => t.type === TaskType.PARTNER).map(t => {
+          const done = user.completedTaskIds.includes(t.id);
+          return (
+            <div key={t.id} className={`bg-slate-900 p-5 rounded-3xl border border-slate-800 flex items-center justify-between shadow-lg ${done ? 'opacity-50' : ''}`}>
+              <div className="flex items-center space-x-4">
+                <span className="text-2xl">🤝</span>
+                <div>
+                  <p className="text-sm font-black text-white">{t.title}</p>
+                  <p className="text-[10px] font-bold text-blue-400">+{t.reward} 💎</p>
+                </div>
+              </div>
+              <button disabled={done} onClick={() => completeTask(t)} className={`px-5 py-2 rounded-full text-[10px] font-black transition-all ${done ? 'bg-slate-800 text-slate-500' : 'bg-white text-slate-900'}`}>
+                {done ? 'DONE' : 'JOIN'}
+              </button>
+            </div>
+          );
+        })}
+
+        {tab === TaskType.ADS && (
+          <div className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 text-center space-y-6 shadow-2xl">
+            <div className="w-20 h-20 bg-blue-600/10 rounded-full flex items-center justify-center text-4xl mx-auto border border-blue-500/20">📺</div>
+            <div>
+              <h2 className="text-xl font-black text-white">Unlimited Video Rewards</h2>
+              <p className="text-[11px] text-slate-500 font-medium px-4 mt-2">Watch a short ad to receive Diamonds instantly.</p>
+            </div>
+            <button onClick={onAd} className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl font-black text-white text-xs uppercase tracking-widest shadow-lg shadow-blue-900/20 transition-all active:scale-95">
+              Watch Ad (+{config.adsReward} 💎)
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const JoinUsView: React.FC<{ config: AppConfig }> = ({ config }) => (
+  <div className="p-5 space-y-8 animate-fadeIn pb-32">
+    <div className="text-center space-y-2">
+      <h1 className="text-3xl font-black text-white tracking-tight">Official Channels</h1>
+      <p className="text-slate-500 text-xs font-medium">Verified updates for our {config.tokenName} community</p>
+    </div>
+
+    <div className="space-y-3">
+      {config.socialLinks.map(link => (
+        <a key={link.id} href={link.url} target="_blank" rel="noopener" className="flex items-center justify-between bg-slate-900 p-5 rounded-3xl border border-slate-800 hover:border-blue-500/50 transition-all active:scale-95 group">
+          <div className="flex items-center space-x-4">
+            <div className="w-12 h-12 bg-blue-600/10 rounded-2xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+              {link.platform.toLowerCase().includes('tele') ? '📱' : link.platform.toLowerCase().includes('twit') || link.platform.toLowerCase().includes('x') ? '🐦' : '🌐'}
+            </div>
+            <div>
+              <p className="text-sm font-black text-white uppercase tracking-wider">{link.platform}</p>
+              <p className="text-blue-500 text-[10px] font-bold">Join Community ➔</p>
+            </div>
+          </div>
+          <span className="text-slate-700">➜</span>
+        </a>
+      ))}
+    </div>
+  </div>
+);
+
+const WalletView: React.FC<{ user: User, config: AppConfig, history: Withdrawal[], onWithdraw: (a: number) => void }> = ({ user, config, history, onWithdraw }) => {
+  const [amt, setAmt] = useState('');
+  const conversion = (user.balances.taskEarnings * config.tonConversionRate).toFixed(5);
+
+  return (
+    <div className="p-5 space-y-6 animate-fadeIn pb-32">
+      <div className="bg-blue-600/10 border border-blue-500/30 p-4 rounded-2xl text-center shadow-lg">
+        <p className="text-[10px] font-black text-blue-400 uppercase tracking-tighter">📢 {config.airdropNotification}</p>
+      </div>
+
+      <div className="bg-gradient-to-br from-blue-700 to-indigo-900 p-8 rounded-[2.5rem] text-white space-y-6 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-10 -mt-10 blur-2xl" />
+        <div className="relative z-10">
+          <p className="text-[10px] font-black opacity-60 uppercase tracking-widest">Withdrawal Balance</p>
+          <div className="flex items-baseline space-x-2 mt-1">
+            <h2 className="text-5xl font-black">{user.balances.taskEarnings.toFixed(2)}</h2>
+            <span className="text-xl font-bold opacity-80">💎</span>
+          </div>
+          <p className="text-sm font-black opacity-80 mt-2">≈ {conversion} TON</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+        <h3 className="text-sm font-black text-white uppercase tracking-wider">CASH OUT TO TON</h3>
+        {!user.walletAddress && <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center"><p className="text-[10px] text-red-500 font-bold uppercase">Setup wallet in Profile first</p></div>}
+        <div className="space-y-2">
+           <div className="flex justify-between text-[10px] text-slate-500 font-black uppercase tracking-widest px-1">
+             <span>Amount (Diamonds)</span>
+             <span>Limit: {config.minWithdrawal} - {config.maxWithdrawal}</span>
+           </div>
+           <div className="relative">
+              <input type="number" value={amt} onChange={e => setAmt(e.target.value)} placeholder={`Min ${config.minWithdrawal} 💎`} className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-4 px-5 text-white font-black outline-none focus:border-blue-500 transition-colors" />
+              <button onClick={() => setAmt(Math.min(user.balances.taskEarnings, config.maxWithdrawal).toString())} className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 px-2 py-1 bg-blue-500/10 rounded-lg">MAX</button>
+           </div>
+        </div>
+        <button 
+          disabled={!amt || parseFloat(amt) < config.minWithdrawal || !user.walletAddress}
+          onClick={() => { onWithdraw(parseFloat(amt)); setAmt(''); }}
+          className="w-full py-4 bg-white text-slate-950 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl disabled:opacity-30 active:scale-95 transition-all"
+        >
+          Request Payout
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-black text-white uppercase tracking-wider px-1">Recent Transactions</h3>
+        {history.length === 0 ? <p className="text-center py-10 text-slate-700 text-[10px] font-black uppercase">No history found</p> : (
+          history.map(w => (
+            <div key={w.id} className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3 shadow-md animate-fadeIn">
+               <div className="flex justify-between items-center">
+                  <div>
+                    <p className="text-sm font-black text-white">{(w.amount * config.tonConversionRate).toFixed(4)} TON</p>
+                    <p className="text-[9px] text-slate-500 font-bold">{new Date(w.timestamp).toLocaleString()}</p>
+                  </div>
+                  <span className={`px-2 py-1 rounded text-[8px] font-black uppercase ${w.status === WithdrawalStatus.APPROVED ? 'bg-green-500/10 text-green-500' : w.status === WithdrawalStatus.REJECTED ? 'bg-red-500/10 text-red-500' : 'bg-yellow-500/10 text-yellow-500'}`}>{w.status}</span>
+               </div>
+               {w.remarks && <div className="p-2 bg-slate-950 rounded-lg text-[9px] text-slate-400 italic">"{w.remarks}"</div>}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ProfileView: React.FC<{ user: User, config: AppConfig, update: (fn: (u: User) => User) => void, onAdmin: () => void }> = ({ user, config, update, onAdmin }) => {
+  const [addr, setAddr] = useState('');
+  const [copied, setCopied] = useState(false);
+  const link = `https://t.me/GykMinerBot?start=${user.id}`;
+
+  const copy = () => {
+    navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="p-5 space-y-6 animate-fadeIn pb-32">
+      <div className="flex flex-col items-center text-center space-y-3 py-6">
+        <div className="w-24 h-24 rounded-full border-4 border-slate-800 shadow-2xl p-1 bg-slate-900">
+           <img src={user.avatar} className="w-full h-full rounded-full object-cover" alt="User" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-black text-white">@{user.username}</h2>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Registered Explorer</p>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 p-6 rounded-[2rem] border border-slate-800 space-y-4 shadow-xl">
+        <div className="flex justify-between items-center">
+          <h3 className="text-xs font-black text-white uppercase tracking-widest">TON WALLET</h3>
+          {user.walletAddress && <span className="text-[8px] font-black text-green-500 bg-green-500/10 px-2 py-0.5 rounded uppercase">Verified</span>}
+        </div>
+        {user.walletAddress ? (
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 break-all font-mono text-[9px] text-slate-400">{user.walletAddress}</div>
+        ) : (
+          <div className="space-y-3">
+             <input value={addr} onChange={e => setAddr(e.target.value)} placeholder="Paste TON Address..." className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs text-white outline-none focus:border-blue-500" />
+             <button onClick={() => update(u => ({ ...u, walletAddress: addr }))} className="w-full py-3 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-900/20 transition-all active:scale-95">Link Wallet</button>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-slate-900 p-6 rounded-[2rem] border border-slate-800 space-y-4 shadow-xl">
+        <div className="flex justify-between items-center">
+          <h3 className="text-xs font-black text-white uppercase tracking-widest">INVITATION HUB</h3>
+          {copied && <span className="text-[8px] font-black text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded uppercase">Link Copied</span>}
+        </div>
+        <div className="flex space-x-2">
+           <div className="flex-1 bg-slate-950 p-4 rounded-xl border border-slate-800 truncate font-mono text-[9px] text-slate-500 leading-none flex items-center">{link}</div>
+           <button onClick={copy} className="p-4 bg-blue-600 rounded-xl text-white shadow-lg active:scale-90 transition-all">📋</button>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+           <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+             <p className="text-[8px] text-slate-500 font-black uppercase">Diamonds</p>
+             <p className="text-xs font-black text-yellow-500">+{config.referralCommission}</p>
+           </div>
+           <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+             <p className="text-[8px] text-slate-500 font-black uppercase">{config.miningTokenSymbol}</p>
+             <p className="text-xs font-black text-blue-500">+{config.referralMiningReward}</p>
+           </div>
+           <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-center">
+             <p className="text-[8px] text-slate-500 font-black uppercase">Speed</p>
+             <p className="text-xs font-black text-green-500">+{config.referralSpeedBoost}</p>
+           </div>
+        </div>
+      </div>
+
+      <button onClick={onAdmin} className="w-full py-4 border-2 border-dashed border-slate-800 text-slate-600 rounded-[2rem] text-[10px] font-black uppercase tracking-widest hover:border-blue-500/30 hover:text-blue-500/50 transition-all">
+        Access Control Panel
+      </button>
+    </div>
+  );
+};
+
+// FIX: Updated AdminPanel prop types to use React.Dispatch and SetStateAction, and fixed the destructuring order.
+const AdminPanel: React.FC<{ 
+  config: AppConfig, setConfig: React.Dispatch<React.SetStateAction<AppConfig>>, 
+  tasks: Task[], setTasks: React.Dispatch<React.SetStateAction<Task[]>>, 
+  withdrawals: Withdrawal[], setWithdrawals: React.Dispatch<React.SetStateAction<Withdrawal[]>>, 
+  users: User[], setUsers: React.Dispatch<React.SetStateAction<User[]>>, 
+  onClose: () => void 
+}> = ({ config, setConfig, tasks, setTasks, withdrawals, setWithdrawals, users, setUsers, onClose }) => {
+  const [activeTab, setActiveTab] = useState<'SYSTEM' | 'FINANCE' | 'SOCIAL' | 'TASKS' | 'WITHDRAWALS'>('SYSTEM');
+  const [remarks, setRemarks] = useState('');
+  const [newPlatform, setNewPlatform] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+
+  const updateConfig = (k: keyof AppConfig, v: any) => setConfig({ ...config, [k]: v });
+
+  const resolveWithdrawal = (id: string, status: WithdrawalStatus) => {
+    if (!remarks.trim()) return alert("Remarks are mandatory.");
+    const withdrawal = withdrawals.find(w => w.id === id);
+    if (!withdrawal) return;
+
+    setWithdrawals(withdrawals.map(w => w.id === id ? { ...w, status, remarks: remarks.trim() } : w));
+    
+    if (status === WithdrawalStatus.REJECTED) {
+      // FIX: Functional updates are now correctly typed and used.
+      setUsers(prev => prev.map(u => u.id === withdrawal.userId ? { 
+        ...u, 
+        balances: { ...u.balances, taskEarnings: u.balances.taskEarnings + withdrawal.amount, totalWithdrawn: u.balances.totalWithdrawn - withdrawal.amount } 
+      } : u));
+    }
+    setRemarks('');
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-slate-900 text-white font-sans overflow-hidden">
+      <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
+        <h2 className="text-sm font-black text-blue-500 uppercase tracking-widest">Master Control Panel</h2>
+        <button onClick={onClose} className="px-4 py-2 bg-slate-800 rounded-xl text-[10px] font-black uppercase transition-all hover:bg-slate-700">Exit</button>
+      </div>
+
+      <div className="flex bg-slate-950 p-2 overflow-x-auto border-b border-slate-800 scrollbar-hide space-x-2">
+        {['SYSTEM', 'FINANCE', 'SOCIAL', 'TASKS', 'WITHDRAWALS'].map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab as any)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${activeTab === tab ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>{tab}</button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-5 space-y-6 pb-20 hide-scrollbar animate-fadeIn">
+        {activeTab === 'SYSTEM' && (
+          <div className="space-y-4">
+             <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Identity & Branding</h3>
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black text-slate-600 uppercase">Logo URL</label>
+                  <input value={config.logo} onChange={e => updateConfig('logo', e.target.value)} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px] font-mono" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Token Name</label>
+                    <input value={config.tokenName} onChange={e => updateConfig('tokenName', e.target.value)} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px] font-bold" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Symbol</label>
+                    <input value={config.miningTokenSymbol} onChange={e => updateConfig('miningTokenSymbol', e.target.value)} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px] font-mono uppercase" />
+                  </div>
+                </div>
+             </div>
+
+             <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mining Core</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Base Speed/hr</label>
+                    <input type="number" step="0.01" value={config.defaultMiningSpeed} onChange={e => updateConfig('defaultMiningSpeed', parseFloat(e.target.value))} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Session Hrs</label>
+                    <input type="number" value={config.miningDurationHours} onChange={e => updateConfig('miningDurationHours', parseFloat(e.target.value))} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                  </div>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {activeTab === 'FINANCE' && (
+          <div className="space-y-4">
+             <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Currency & Rates</h3>
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black text-yellow-500 uppercase">Diamonds to TON Conversion Rate</label>
+                  <div className="flex items-center space-x-2">
+                    <input type="number" step="0.0001" value={config.tonConversionRate} onChange={e => updateConfig('tonConversionRate', parseFloat(e.target.value))} className="flex-1 bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                    <span className="text-[8px] font-black text-slate-500 whitespace-nowrap">1 💎 = {config.tonConversionRate} TON</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Min Withdraw</label>
+                    <input type="number" value={config.minWithdrawal} onChange={e => updateConfig('minWithdrawal', parseFloat(e.target.value))} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[8px] font-black text-slate-600 uppercase">Max Withdraw</label>
+                    <input type="number" value={config.maxWithdrawal} onChange={e => updateConfig('maxWithdrawal', parseFloat(e.target.value))} className="w-full bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                  </div>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {activeTab === 'SOCIAL' && (
+          <div className="space-y-4">
+             <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Join Us Channels</h3>
+                <div className="space-y-2">
+                   {config.socialLinks.map(l => (
+                     <div key={l.id} className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800">
+                        <div className="overflow-hidden">
+                           <p className="text-[9px] font-black uppercase text-white">{l.platform}</p>
+                           <p className="text-[8px] text-slate-500 truncate font-mono">{l.url}</p>
+                        </div>
+                        <button onClick={() => updateConfig('socialLinks', config.socialLinks.filter(sl => sl.id !== l.id))} className="text-red-500 p-1">🗑️</button>
+                     </div>
+                   ))}
+                </div>
+                <div className="pt-4 border-t border-slate-800 space-y-2">
+                   <p className="text-[8px] font-black text-slate-600 uppercase">Add New Platform</p>
+                   <div className="grid grid-cols-2 gap-2">
+                      <input placeholder="Name" value={newPlatform} onChange={e => setNewPlatform(e.target.value)} className="bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                      <input placeholder="URL" value={newUrl} onChange={e => setNewUrl(e.target.value)} className="bg-slate-900 border border-slate-800 p-2 rounded-lg text-[10px]" />
+                   </div>
+                   <button onClick={() => { if(newPlatform && newUrl) { updateConfig('socialLinks', [...config.socialLinks, {id: Date.now().toString(), platform: newPlatform, url: newUrl}]); setNewPlatform(''); setNewUrl(''); } }} className="w-full py-2 bg-blue-600 rounded-lg text-[9px] font-black uppercase">Add Social Link</button>
+                </div>
+             </div>
+          </div>
+        )}
+
+        {activeTab === 'TASKS' && (
+          <div className="space-y-4">
+             {tasks.map(t => (
+               <div key={t.id} className="p-4 bg-slate-950 border border-slate-800 rounded-2xl flex justify-between items-center">
+                  <div>
+                    <p className="text-[10px] font-black text-white uppercase">{t.title}</p>
+                    <p className="text-[8px] text-blue-500 font-bold uppercase">{t.type} | {t.reward} 💎</p>
+                  </div>
+                  <button onClick={() => setTasks(prev => prev.filter(tk => tk.id !== t.id))} className="text-red-500 text-sm">🗑️</button>
+               </div>
+             ))}
+             <button className="w-full py-6 border-2 border-dashed border-slate-800 text-slate-500 rounded-2xl text-[9px] font-black uppercase tracking-widest">+ Add Reward Mission</button>
+          </div>
+        )}
+
+        {activeTab === 'WITHDRAWALS' && (
+          <div className="space-y-4">
+             {withdrawals.filter(w => w.status === WithdrawalStatus.PENDING).map(w => (
+               <div key={w.id} className="bg-slate-950 border border-slate-800 p-5 rounded-3xl space-y-4 shadow-xl">
+                  <div className="flex justify-between items-start">
+                    <div>
+                       <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">User ID: {w.userId}</p>
+                       <p className="text-xl font-black text-white">{w.amount} 💎</p>
+                       <p className="text-[8px] font-mono text-slate-400 break-all bg-slate-900 p-2 rounded mt-2">{w.walletAddress}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                     <label className="text-[8px] font-black text-slate-600 uppercase ml-1">Resolution Note (Mandatory)</label>
+                     <input value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Reason for action..." className="w-full bg-slate-900 border border-slate-800 p-3 rounded-xl text-[10px] italic" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                     <button onClick={() => resolveWithdrawal(w.id, WithdrawalStatus.APPROVED)} className="py-3 bg-green-600 rounded-xl text-[9px] font-black uppercase transition-all active:scale-95">Approve</button>
+                     <button onClick={() => resolveWithdrawal(w.id, WithdrawalStatus.REJECTED)} className="py-3 bg-red-600 rounded-xl text-[9px] font-black uppercase transition-all active:scale-95">Reject</button>
+                  </div>
+               </div>
+             ))}
+             {withdrawals.filter(w => w.status === WithdrawalStatus.PENDING).length === 0 && <p className="text-center py-10 text-[10px] font-black text-slate-700 uppercase">Queue Clear</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN APP ---
+
+const App: React.FC = () => {
+  const [view, setView] = useState<View>(View.HOME);
+  const [user, setUser] = useState<User | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
+  const [config, setConfig] = useState<AppConfig>(INITIAL_CONFIG);
+  const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
+  const [admin, setAdmin] = useState(false);
+  const [adShow, setAdShow] = useState(false);
+  const [adTimer, setAdTimer] = useState(0);
+
+  const usersRef = useRef<User[]>([]);
+  const configRef = useRef<AppConfig>(INITIAL_CONFIG);
+  usersRef.current = users;
+  configRef.current = config;
+
+  // Persist State
+  useEffect(() => {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const db = JSON.parse(raw);
+      setConfig(db.config || INITIAL_CONFIG);
+      setTasks(db.tasks || INITIAL_TASKS);
+      setWithdrawals(db.withdrawals || []);
+      setUsers(db.users || []);
+      const demoUser = db.users?.find((u: any) => u.id === 'user_789') || createDefaultUser();
+      setUser(demoUser);
+    } else {
+      const u = createDefaultUser();
+      setUsers([u]);
+      setUser(u);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (users.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ config, tasks, withdrawals, users }));
+    }
+  }, [config, tasks, withdrawals, users]);
+
+  const createDefaultUser = (): User => ({
+    id: 'user_789',
+    username: 'CryptoExplorer',
+    avatar: 'https://picsum.photos/seed/gyk/200',
+    joiningDate: Date.now(),
+    walletAddress: '',
+    balances: { mining: 0, daily: 0, partner: 0, ads: 0, taskEarnings: 0, totalWithdrawn: 0 },
+    mining: { startTime: null, isMining: false },
+    referrals: [],
+    completedTaskIds: [],
+    lastDailyLogin: null
+  });
+
+  const updateUser = (fn: (u: User) => User) => {
+    setUser(prev => {
+      if (!prev) return null;
+      const updated = fn({ ...prev });
+      setUsers(all => all.map(u => u.id === updated.id ? updated : u));
+      return updated;
+    });
+  };
+
+  // Mining Engine
+  useEffect(() => {
+    if (!user?.mining.isMining) return;
+    const interval = setInterval(() => {
+      const u = usersRef.current.find(i => i.id === user.id);
+      if (!u || !u.mining.startTime) return;
+      const elapsed = Date.now() - u.mining.startTime;
+      const duration = configRef.current.miningDurationHours * 3600000;
+      if (elapsed >= duration) {
+        const speed = configRef.current.defaultMiningSpeed + (u.referrals.length * configRef.current.referralSpeedBoost);
+        const earned = speed * configRef.current.miningDurationHours;
+        updateUser(old => ({
+          ...old,
+          mining: { isMining: false, startTime: null },
+          balances: { ...old.balances, mining: old.balances.mining + earned }
+        }));
+        clearInterval(interval);
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [user?.mining.isMining]);
+
+  const startMining = () => {
+    setAdShow(true);
+    setAdTimer(5);
+    const i = setInterval(() => {
+      setAdTimer(p => {
+        if (p <= 1) {
+          clearInterval(i);
+          setAdShow(false);
+          updateUser(u => ({ ...u, mining: { isMining: true, startTime: Date.now() } }));
+          return 0;
+        }
+        return p - 1;
+      });
+    }, 1000);
+  };
+
+  const watchAd = () => {
+    setAdShow(true);
+    setAdTimer(10);
+    const i = setInterval(() => {
+      setAdTimer(p => {
+        if (p <= 1) {
+          clearInterval(i);
+          setAdShow(false);
+          updateUser(u => ({
+            ...u,
+            balances: { ...u.balances, ads: u.balances.ads + config.adsReward, taskEarnings: u.balances.taskEarnings + config.adsReward }
+          }));
+          return 0;
+        }
+        return p - 1;
+      });
+    }, 1000);
+  };
+
+  const withdraw = (amount: number) => {
+    const w: Withdrawal = {
+      id: `w_${Date.now()}`,
+      userId: user!.id,
+      amount,
+      status: WithdrawalStatus.PENDING,
+      timestamp: Date.now(),
+      walletAddress: user!.walletAddress
+    };
+    setWithdrawals([w, ...withdrawals]);
+    updateUser(u => ({
+      ...u,
+      balances: { ...u.balances, taskEarnings: u.balances.taskEarnings - amount, totalWithdrawn: u.balances.totalWithdrawn + amount }
+    }));
+  };
+
+  const currentView = () => {
+    // FIX: Updated props to match correct destructuring and prop passing.
+    if (admin) return <AdminPanel config={config} setConfig={setConfig} tasks={tasks} setTasks={setTasks} withdrawals={withdrawals} setWithdrawals={setWithdrawals} users={users} setUsers={setUsers} onClose={() => setAdmin(false)} />;
+    switch (view) {
+      case View.HOME: return <HomeView user={user!} config={config} onStart={startMining} />;
+      case View.TASKS: return <TasksView user={user!} config={config} tasks={tasks} update={updateUser} onAd={watchAd} />;
+      case View.JOIN_US: return <JoinUsView config={config} />;
+      case View.WALLET: return <WalletView user={user!} config={config} history={withdrawals.filter(w => w.userId === user?.id)} onWithdraw={withdraw} />;
+      case View.PROFILE: return <ProfileView user={user!} config={config} update={updateUser} onAdmin={() => setAdmin(true)} />;
+      default: return null;
+    }
+  };
+
+  if (!user) return <div className="h-screen bg-slate-950 flex items-center justify-center font-black text-white animate-pulse">BOOTING...</div>;
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-950 max-w-md mx-auto relative overflow-hidden text-slate-200">
+      <div className="flex-1 overflow-y-auto hide-scrollbar">{currentView()}</div>
+      
+      {!admin && (
+        <nav className="h-20 bg-slate-900/90 backdrop-blur-md border-t border-slate-800 flex justify-around items-center px-2 z-50">
+          {[
+            { id: View.HOME, label: 'Home', icon: '🏠' },
+            { id: View.TASKS, label: 'Tasks', icon: '📋' },
+            { id: View.JOIN_US, label: 'Join Us', icon: '📢' },
+            { id: View.WALLET, label: 'Wallet', icon: '💰' },
+            { id: View.PROFILE, label: 'Profile', icon: '👤' }
+          ].map(i => (
+            <button key={i.id} onClick={() => setView(i.id)} className={`flex flex-col items-center justify-center space-y-1 transition-all ${view === i.id ? 'text-blue-500 scale-110' : 'text-slate-500 opacity-60'}`}>
+              <span className="text-2xl">{i.icon}</span>
+              <span className="text-[9px] font-black uppercase tracking-widest">{i.label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {adShow && (
+        <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center backdrop-blur-lg">
+           <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] text-center space-y-6 max-w-xs w-full shadow-2xl">
+              <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto text-3xl font-bold animate-spin text-white">AD</div>
+              <div className="space-y-1">
+                <h2 className="text-xl font-black text-white">Sponsor Video</h2>
+                <p className="text-slate-500 text-xs font-medium">Please wait to receive reward...</p>
+              </div>
+              <div className="text-6xl font-black text-blue-500 tabular-nums">{adTimer}s</div>
+           </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- RENDER ---
+const root = ReactDOM.createRoot(document.getElementById('root')!);
+root.render(<React.StrictMode><App /></React.StrictMode>);
